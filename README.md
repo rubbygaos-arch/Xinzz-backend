@@ -1,30 +1,21 @@
-# XINZZ Panel Backend
+# XINZZ Panel Backend v2
 
-Backend ini cocok dengan frontend XINZZ Panel yang memiliki endpoint:
+Fitur:
+- Upload ZIP SC
+- Extract otomatis
+- Deteksi package.json dan npm start
+- npm install
+- Start / Stop / Restart
+- Console log
+- Status CPU/RAM sederhana
 
-- GET /status
-- POST /control
+## Jalankan
+npm install
+npm start
 
-## Deploy ke Render
-
-1. Upload folder ini ke repository GitHub baru, misalnya `xinz-backend`.
-2. Render -> New -> Web Service.
-3. Pilih repository backend.
-4. Build Command:
-   npm install
-5. Start Command:
-   npm start
-6. Deploy.
-7. Salin URL Render, misalnya:
-   https://xinz-backend.onrender.com
-8. Masukkan URL itu ke kolom API URL pada XINZZ Panel.
+Buka port 3000 di Codespaces.
 
 ## Penting
+Kode SC tetap memakai sistem QR/pairing bawaannya. Backend ini tidak mengubah QR SC.
 
-Backend ini memakai PM2 untuk mengontrol proses SC:
-
-    pm2 start index.js --name xinzz-sc
-
-Ganti `index.js` dengan file start XINZZ SC kamu.
-
-Render free tier cocok untuk backend API, tetapi bukan tempat ideal untuk menjalankan bot WhatsApp 24/7 karena service dapat sleep.
+Untuk keamanan, isi PANEL_TOKEN di environment sebelum membuat port publik.
