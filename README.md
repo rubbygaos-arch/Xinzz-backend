@@ -1,21 +1,22 @@
-# XINZZ Panel Backend v2
+# XINZZ Panel Backend v2.1 QR FIX
 
 Fitur:
-- Upload ZIP SC
-- Extract otomatis
-- Deteksi package.json dan npm start
+- Upload ZIP SC dan extract otomatis
 - npm install
 - Start / Stop / Restart
 - Console log
-- Status CPU/RAM sederhana
+- Status CPU/RAM
+- QR bridge: menangkap QR asli dari SC yang menggunakan `qrcode-terminal`
+- `GET /qr` dan field `qr` pada `/status`
 
 ## Jalankan
+```bash
 npm install
 npm start
+```
 
-Buka port 3000 di Codespaces.
+Buka port 3000 sebagai public di Codespaces.
 
 ## Penting
-Kode SC tetap memakai sistem QR/pairing bawaannya. Backend ini tidak mengubah QR SC.
-
-Untuk keamanan, isi PANEL_TOKEN di environment sebelum membuat port publik.
+Backend ini tidak mengganti QR menjadi pairing code. QR tetap dihasilkan oleh SC.
+Jika SC tidak menggunakan `qrcode-terminal`, integrasi QR perlu disesuaikan dengan file koneksi SC tersebut.
