@@ -1,11 +1,12 @@
 {
   "name": "xinz-panel-backend-upload",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "private": true,
   "main": "server.js",
   "scripts": {
     "check:node": "node -e \"const m=Number(process.versions.node.split('.')[0]); if(m!==20){console.error('ERROR: Backend ini harus dijalankan dengan Node.js 20. Versi sekarang: '+process.version); process.exit(1)} console.log('OK Node.js '+process.version)\"",
-    "start": "npm run check:node && node server.js"
+    "start": "npm run check:node && node server.js",
+    "start:stable": "npm run check:node && node watchdog.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

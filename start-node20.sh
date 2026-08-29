@@ -9,5 +9,5 @@ if command -v nvm >/dev/null 2>&1; then
   nvm use 20 >/dev/null || true
 fi
 
-node -v
-npm start
+echo "Node aktif: $(node -v)"
+npm run start:stable
