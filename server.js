@@ -19,6 +19,7 @@ const SCRIPT_DIR = path.join(ROOT, 'script');
 const QR_FILE = path.join(ROOT, 'latest-qr.txt');
 const QR_HOOK = path.join(__dirname, 'qr-hook.js');
 const STATE_FILE = path.join(ROOT, 'backend-state.json');
+const PANEL_CONFIG_FILE = path.join(ROOT, 'panel-config.json');
 const MAX_LOG_LINES = Math.max(200, Number(process.env.MAX_LOG_LINES || 1000));
 const LOG_KEEP_LINES = Math.max(100, Math.min(MAX_LOG_LINES, Number(process.env.LOG_KEEP_LINES || 700)));
 const CLEANUP_INTERVAL_MS = Math.max(60_000, Number(process.env.CLEANUP_INTERVAL_MS || 30 * 60 * 1000));
@@ -58,6 +59,53 @@ let installed = false;
 let scriptInfo = null;
 let startedAt = Date.now();
 let shuttingDown = false;
+
+
+function normalizeUrl(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    const url = new URL(raw);
+    if (!/^https?:$/.test(url.protocol)) return '';
+    return url.toString().replace(/\/$/, '');
+  } catch (_) {
+    return '';
+  }
+}
+
+function loadPanelConfig() {
+  try {
+    if (!fs.existsSync(PANEL_CONFIG_FILE)) return {};
+    const value = JSON.parse(fs.readFileSync(PANEL_CONFIG_FILE, 'utf8'));
+    return value && typeof value === 'object' ? value : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function savePanelConfig(next) {
+  const current = loadPanelConfig();
+  const merged = {
+    ...current,
+    ...next,
+    updatedAt: new Date().toISOString()
+  };
+  fs.writeFileSync(PANEL_CONFIG_FILE, JSON.stringify(merged, null, 2), 'utf8');
+  return merged;
+}
+
+function inferPublicUrl(req) {
+  const envUrl = normalizeUrl(process.env.PANEL_PUBLIC_URL || '');
+  if (envUrl) return envUrl;
+  const saved = normalizeUrl(loadPanelConfig().apiUrl);
+  if (saved) return saved;
+  const proto = String(req?.get?.('x-forwarded-proto') || req?.protocol || 'http')
+    .split(',')[0].trim() || 'http';
+  const host = String(req?.get?.('x-forwarded-host') || req?.get?.('host') || '')
+    .split(',')[0].trim();
+  if (!host) return '';
+  return `${proto}://${host}`.replace(/\/$/, '');
+}
 
 function saveState() {
   try {
@@ -252,7 +300,45 @@ function runCommand(command, args, cwd, onDone) {
   });
 }
 
+
+// Persistent backend URL configuration.
+// This lets a panel/front-end save the API URL once instead of losing it on backend restart.
+app.get('/config', auth, (req, res) => {
+  const config = loadPanelConfig();
+  res.json({
+    ok: true,
+    apiUrl: normalizeUrl(config.apiUrl) || inferPublicUrl(req),
+    saved: !!normalizeUrl(config.apiUrl),
+    updatedAt: config.updatedAt || null
+  });
+});
+
+app.post('/config', auth, (req, res) => {
+  try {
+    const requested = normalizeUrl(req.body?.apiUrl || req.body?.url || '');
+    const apiUrl = requested || inferPublicUrl(req);
+    if (!apiUrl) throw new Error('API URL tidak valid');
+    const config = savePanelConfig({ apiUrl });
+    addLog(`API URL disimpan permanen: ${apiUrl}`);
+    res.json({ ok: true, message: 'API URL tersimpan permanen', apiUrl, updatedAt: config.updatedAt });
+  } catch (e) {
+    res.status(400).json({ ok: false, message: e.message });
+  }
+});
+
+app.get('/connection-info', auth, (req, res) => {
+  const config = loadPanelConfig();
+  res.json({
+    ok: true,
+    apiUrl: normalizeUrl(config.apiUrl) || inferPublicUrl(req),
+    health: '/health',
+    status: '/status',
+    saved: !!normalizeUrl(config.apiUrl)
+  });
+});
+
 app.get('/health', (req,res) => {
+  const config = loadPanelConfig();
   res.json({
     ok:true,
     backend:true,
@@ -260,13 +346,14 @@ app.get('/health', (req,res) => {
     uptime:Math.floor((Date.now() - startedAt) / 1000),
     running:!!child,
     installed,
+    apiUrl: normalizeUrl(config.apiUrl) || inferPublicUrl(req),
     timestamp:new Date().toISOString()
   });
 });
 
 app.get('/', (req,res) => res.json({
   ok:true, name:'XINZZ Panel Backend v2.6 STABLE LONGRUN',
-  endpoints:['/status','/qr','/qr.png','/upload','/install','/control','/logs']
+  endpoints:['/health','/config','/connection-info','/status','/qr','/qr.png','/upload','/install','/control','/logs']
 }));
 
 app.get('/status', auth, async (req,res) => {
