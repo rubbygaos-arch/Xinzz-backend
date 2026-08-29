@@ -1,23 +1,16 @@
-# XINZZ Panel Backend v2.2 QR ROUTE FIX
+# XINZZ Panel Backend v2.3 FRESH QR FIX
 
-Fitur:
-- Upload ZIP SC dan extract otomatis
-- npm install
-- Start / Stop / Restart
-- Console log
-- Status CPU/RAM
-- QR bridge: menangkap QR asli dari SC yang menggunakan `qrcode-terminal`
-- `GET /qr`, `GET /qr.png`, dan field `qr` pada `/status`
-- Membaca QR asli SC dari `data/qr.png` tanpa mengubah sistem QR/pairing SC
+Perbaikan khusus QR:
+- Membaca ulang data/qr.png terbaru dari SC.
+- Cache browser/API dimatikan untuk endpoint QR.
+- `/status` mengirim QR terbaru + `qrVersion`.
+- `/qr.png` selalu mengirim isi file terbaru dengan header no-cache.
+- Tidak mengubah sistem QR/pairing asli SC.
 
-## Jalankan
-```bash
+Cara menjalankan:
 npm install
 npm start
-```
 
-Buka port 3000 sebagai public di Codespaces.
-
-## Penting
-Backend ini tidak mengganti QR menjadi pairing code. QR tetap dihasilkan oleh SC.
-Jika SC tidak menggunakan `qrcode-terminal`, integrasi QR perlu disesuaikan dengan file koneksi SC tersebut.
+Jika port 3000 sudah dipakai:
+pkill -f node
+npm start

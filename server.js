@@ -23,6 +23,13 @@ fs.mkdirSync(SCRIPT_DIR, { recursive: true });
 
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: '1mb' }));
+app.set('etag', false);
+app.use((req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next();
+});
 
 function auth(req, res, next) {
   if (!TOKEN) return next();
@@ -99,14 +106,27 @@ function findSCQRImage() {
   return null;
 }
 
+let qrVersion = 0;
+let qrFileStamp = '';
+
 async function syncSCQRImage() {
   const file = findSCQRImage();
   if (!file) return null;
   try {
+    const stat = fs.statSync(file);
+    const stamp = `${stat.mtimeMs}:${stat.size}`;
     const ext = path.extname(file).toLowerCase();
     const mime = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'image/png';
+
+    // Always read the current QR file. If the SC replaces it, the data URL changes too.
     const data = fs.readFileSync(file).toString('base64');
-    qrDataUrl = `data:${mime};base64,${data}`;
+    const nextDataUrl = `data:${mime};base64,${data}`;
+    if (stamp !== qrFileStamp || nextDataUrl !== qrDataUrl) {
+      qrFileStamp = stamp;
+      qrDataUrl = nextDataUrl;
+      qrVersion += 1;
+      addLog(`QR asli diperbarui (versi ${qrVersion})`);
+    }
     return file;
   } catch (_) {
     return null;
@@ -116,6 +136,8 @@ async function syncSCQRImage() {
 function clearQR() {
   qrRaw = '';
   qrDataUrl = '';
+  qrVersion = 0;
+  qrFileStamp = '';
   try { fs.rmSync(QR_FILE, { force: true }); } catch (_) {}
 }
 
@@ -185,7 +207,7 @@ function runCommand(command, args, cwd, onDone) {
 }
 
 app.get('/', (req,res) => res.json({
-  ok:true, name:'XINZZ Panel Backend v2.2 QR ROUTE FIX',
+  ok:true, name:'XINZZ Panel Backend v2.3 FRESH QR FIX',
   endpoints:['/status','/qr','/qr.png','/upload','/install','/control','/logs']
 }));
 
@@ -199,7 +221,9 @@ app.get('/status', auth, async (req,res) => {
     ram: `${Math.round(((total-free)/total)*100)}%`,
     uptime: `${Math.floor(process.uptime())}s`,
     logs: logs.slice(-200).join('\n'),
-    qr: qrDataUrl || null
+    qr: qrDataUrl || null,
+    qrVersion,
+    qrUrl: qrDataUrl ? `/qr.png?v=${qrVersion}` : null
   });
 });
 
@@ -213,8 +237,17 @@ app.get('/qr', auth, async (req,res) => {
 // Direct image endpoint for panels that use <img src=".../qr.png">.
 // First serves the original SC file data/qr.png, then falls back to the bridged QR.
 app.get('/qr.png', auth, async (req,res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+
   const file = await syncSCQRImage();
-  if (file) return res.sendFile(file);
+  if (file) {
+    const ext = path.extname(file).toLowerCase();
+    res.type(ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'image/png');
+    return res.send(fs.readFileSync(file));
+  }
+
   await syncQRFile();
   if (qrDataUrl) {
     try {
@@ -301,7 +334,7 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, () => {
-  addLog(`Backend XINZZ QR FIX berjalan di port ${PORT}`);
+  addLog(`Backend XINZZ FRESH QR FIX berjalan di port ${PORT}`);
   if (!TOKEN) addLog('PERINGATAN: PANEL_TOKEN kosong. Jangan buka port ke publik untuk penggunaan bersama.');
-  console.log(`Server XINZZ Backend v2.2 QR ROUTE FIX berjalan di port ${PORT}`);
+  console.log(`Server XINZZ Backend v2.3 FRESH QR FIX berjalan di port ${PORT}`);
 });
