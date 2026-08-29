@@ -18,6 +18,11 @@ const UPLOADS = path.join(ROOT, 'uploads');
 const SCRIPT_DIR = path.join(ROOT, 'script');
 const QR_FILE = path.join(ROOT, 'latest-qr.txt');
 const QR_HOOK = path.join(__dirname, 'qr-hook.js');
+const STATE_FILE = path.join(ROOT, 'backend-state.json');
+const MAX_LOG_LINES = Math.max(200, Number(process.env.MAX_LOG_LINES || 1000));
+const LOG_KEEP_LINES = Math.max(100, Math.min(MAX_LOG_LINES, Number(process.env.LOG_KEEP_LINES || 700)));
+const CLEANUP_INTERVAL_MS = Math.max(60_000, Number(process.env.CLEANUP_INTERVAL_MS || 30 * 60 * 1000));
+const STALE_UPLOAD_MS = Math.max(60_000, Number(process.env.STALE_UPLOAD_MS || 6 * 60 * 60 * 1000));
 fs.mkdirSync(UPLOADS, { recursive: true });
 fs.mkdirSync(SCRIPT_DIR, { recursive: true });
 
@@ -51,6 +56,47 @@ let child = null;
 let logs = [];
 let installed = false;
 let scriptInfo = null;
+let startedAt = Date.now();
+let shuttingDown = false;
+
+function saveState() {
+  try {
+    fs.writeFileSync(STATE_FILE, JSON.stringify({
+      installed,
+      scriptInfo,
+      updatedAt: new Date().toISOString()
+    }), 'utf8');
+  } catch (_) {}
+}
+
+function loadState() {
+  try {
+    if (!fs.existsSync(STATE_FILE)) return;
+    const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+    installed = !!state.installed;
+    scriptInfo = state.scriptInfo || null;
+  } catch (_) {
+    installed = false;
+    scriptInfo = null;
+  }
+}
+
+function cleanupStorage() {
+  try {
+    const now = Date.now();
+    for (const name of fs.readdirSync(UPLOADS)) {
+      const file = path.join(UPLOADS, name);
+      try {
+        const stat = fs.statSync(file);
+        if (stat.isFile() && now - stat.mtimeMs > STALE_UPLOAD_MS) fs.rmSync(file, { force:true });
+      } catch (_) {}
+    }
+    if (logs.length > MAX_LOG_LINES) logs = logs.slice(-LOG_KEEP_LINES);
+    if (global.gc) global.gc();
+  } catch (_) {}
+}
+
+loadState();
 let qrRaw = '';
 let qrDataUrl = '';
 let qrBusy = false;
@@ -60,7 +106,7 @@ function addLog(line) {
   for (const part of text.split('\n')) {
     if (part.trim()) logs.push(`[${new Date().toLocaleTimeString()}] ${part}`);
   }
-  if (logs.length > 600) logs = logs.slice(-600);
+  if (logs.length > MAX_LOG_LINES) logs = logs.slice(-LOG_KEEP_LINES);
 }
 
 async function setQR(value) {
@@ -206,8 +252,20 @@ function runCommand(command, args, cwd, onDone) {
   });
 }
 
+app.get('/health', (req,res) => {
+  res.json({
+    ok:true,
+    backend:true,
+    pid:process.pid,
+    uptime:Math.floor((Date.now() - startedAt) / 1000),
+    running:!!child,
+    installed,
+    timestamp:new Date().toISOString()
+  });
+});
+
 app.get('/', (req,res) => res.json({
-  ok:true, name:'XINZZ Panel Backend v2.3 FRESH QR FIX',
+  ok:true, name:'XINZZ Panel Backend v2.6 STABLE LONGRUN',
   endpoints:['/status','/qr','/qr.png','/upload','/install','/control','/logs']
 }));
 
@@ -219,8 +277,9 @@ app.get('/status', auth, async (req,res) => {
     ok:true, backend:true, scriptInstalled: installed, script: scriptInfo, running: !!child,
     cpu: `${Math.round(os.loadavg()[0] * 100) / 100}`,
     ram: `${Math.round(((total-free)/total)*100)}%`,
-    uptime: `${Math.floor(process.uptime())}s`,
-    logs: logs.slice(-200).join('\n'),
+    uptime: `${Math.floor((Date.now() - startedAt) / 1000)}s`,
+    memory: { rss: Math.round(process.memoryUsage().rss / 1024 / 1024), heapUsed: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) },
+    logs: logs.slice(-Math.min(200, LOG_KEEP_LINES)).join('\n'),
     qr: qrDataUrl || null,
     qrVersion,
     qrUrl: qrDataUrl ? `/qr.png?v=${qrVersion}` : null
@@ -261,17 +320,18 @@ app.get('/qr.png', auth, async (req,res) => {
   return res.status(404).send('QR belum tersedia');
 });
 
-app.get('/logs', auth, (req,res) => res.json({ ok:true, logs: logs.slice(-500) }));
+app.get('/logs', auth, (req,res) => res.json({ ok:true, logs: logs.slice(-Math.min(500, LOG_KEEP_LINES)) }));
 
 app.post('/upload', auth, upload.single('script'), (req,res) => {
   try {
     if (!req.file) throw new Error('File ZIP belum dipilih');
     stopProcess(); clearScriptDir(); clearQR();
-    installed = false; scriptInfo = null; logs = [];
+    installed = false; scriptInfo = null; saveState(); logs = [];
     addLog(`Upload diterima: ${req.file.originalname}`);
     safeExtract(req.file.path);
     fs.unlinkSync(req.file.path);
     scriptInfo = readPackage();
+    saveState();
     addLog(`SC terdeteksi: ${scriptInfo.name} v${scriptInfo.version}`);
     res.json({ ok:true, message:'Upload dan extract berhasil', script:scriptInfo });
   } catch (e) {
@@ -284,11 +344,11 @@ app.post('/install', auth, (req,res) => {
   try {
     if (!scriptInfo) throw new Error('Upload SC terlebih dahulu');
     if (req.app.locals.installing) throw new Error('Install sedang berjalan');
-    req.app.locals.installing = true; installed = false;
+    req.app.locals.installing = true; installed = false; saveState();
     addLog('Memulai npm install...');
     runCommand('npm', ['install'], SCRIPT_DIR, (err) => {
       req.app.locals.installing = false;
-      if (!err) { installed = true; addLog('Dependency SC berhasil diinstall'); }
+      if (!err) { installed = true; saveState(); addLog('Dependency SC berhasil diinstall'); }
       else addLog(`Install gagal: ${err.message}`);
     });
     res.json({ ok:true, message:'npm install dimulai. Pantau Console.' });
@@ -333,8 +393,32 @@ app.use((err, req, res, next) => {
   res.status(400).json({ ok:false, message:msg });
 });
 
+const cleanupTimer = setInterval(cleanupStorage, CLEANUP_INTERVAL_MS);
+cleanupTimer.unref();
+cleanupStorage();
+
+function gracefulShutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  addLog(`Backend menerima ${signal}, menghentikan proses dengan aman...`);
+  try { stopProcess(); } catch (_) {}
+  try { saveState(); } catch (_) {}
+  setTimeout(() => process.exit(0), 300).unref();
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('uncaughtException', err => {
+  addLog(`UNCAUGHT ERROR: ${err && err.message || err}`);
+  try { saveState(); } catch (_) {}
+  setTimeout(() => process.exit(1), 100).unref();
+});
+process.on('unhandledRejection', err => {
+  addLog(`UNHANDLED REJECTION: ${err && err.message || err}`);
+});
+
 app.listen(PORT, () => {
-  addLog(`Backend XINZZ FRESH QR FIX berjalan di port ${PORT}`);
+  addLog(`Backend XINZZ v2.6 STABLE LONGRUN berjalan di port ${PORT}`);
   if (!TOKEN) addLog('PERINGATAN: PANEL_TOKEN kosong. Jangan buka port ke publik untuk penggunaan bersama.');
-  console.log(`Server XINZZ Backend v2.3 FRESH QR FIX berjalan di port ${PORT}`);
+  console.log(`Server XINZZ Backend v2.6 STABLE LONGRUN berjalan di port ${PORT}`);
 });
