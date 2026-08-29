@@ -81,6 +81,38 @@ async function syncQRFile() {
   } catch (_) {}
 }
 
+function findSCQRImage() {
+  // Read the QR image produced by the original SC without modifying its QR flow.
+  const candidates = [
+    path.join(SCRIPT_DIR, 'data', 'qr.png'),
+    path.join(SCRIPT_DIR, 'data', 'qr.jpg'),
+    path.join(SCRIPT_DIR, 'data', 'qr.jpeg'),
+    path.join(SCRIPT_DIR, 'qr.png'),
+    path.join(SCRIPT_DIR, 'qr.jpg'),
+    path.join(SCRIPT_DIR, 'qr.jpeg')
+  ];
+  for (const file of candidates) {
+    try {
+      if (fs.existsSync(file) && fs.statSync(file).isFile() && fs.statSync(file).size > 0) return file;
+    } catch (_) {}
+  }
+  return null;
+}
+
+async function syncSCQRImage() {
+  const file = findSCQRImage();
+  if (!file) return null;
+  try {
+    const ext = path.extname(file).toLowerCase();
+    const mime = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'image/png';
+    const data = fs.readFileSync(file).toString('base64');
+    qrDataUrl = `data:${mime};base64,${data}`;
+    return file;
+  } catch (_) {
+    return null;
+  }
+}
+
 function clearQR() {
   qrRaw = '';
   qrDataUrl = '';
@@ -153,12 +185,13 @@ function runCommand(command, args, cwd, onDone) {
 }
 
 app.get('/', (req,res) => res.json({
-  ok:true, name:'XINZZ Panel Backend v2.1 QR FIX',
-  endpoints:['/status','/qr','/upload','/install','/control','/logs']
+  ok:true, name:'XINZZ Panel Backend v2.2 QR ROUTE FIX',
+  endpoints:['/status','/qr','/qr.png','/upload','/install','/control','/logs']
 }));
 
 app.get('/status', auth, async (req,res) => {
   await syncQRFile();
+  await syncSCQRImage();
   const total = os.totalmem(), free = os.freemem();
   res.json({
     ok:true, backend:true, scriptInstalled: installed, script: scriptInfo, running: !!child,
@@ -172,8 +205,27 @@ app.get('/status', auth, async (req,res) => {
 
 app.get('/qr', auth, async (req,res) => {
   await syncQRFile();
+  await syncSCQRImage();
   if (!qrDataUrl) return res.status(404).json({ ok:false, message:'QR belum tersedia. Start SC dan tunggu QR asli muncul.' });
   res.json({ ok:true, qr: qrDataUrl });
+});
+
+// Direct image endpoint for panels that use <img src=".../qr.png">.
+// First serves the original SC file data/qr.png, then falls back to the bridged QR.
+app.get('/qr.png', auth, async (req,res) => {
+  const file = await syncSCQRImage();
+  if (file) return res.sendFile(file);
+  await syncQRFile();
+  if (qrDataUrl) {
+    try {
+      const match = qrDataUrl.match(/^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i);
+      if (match) {
+        res.type(match[1]);
+        return res.send(Buffer.from(match[2], 'base64'));
+      }
+    } catch (_) {}
+  }
+  return res.status(404).send('QR belum tersedia');
 });
 
 app.get('/logs', auth, (req,res) => res.json({ ok:true, logs: logs.slice(-500) }));
@@ -251,5 +303,5 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
   addLog(`Backend XINZZ QR FIX berjalan di port ${PORT}`);
   if (!TOKEN) addLog('PERINGATAN: PANEL_TOKEN kosong. Jangan buka port ke publik untuk penggunaan bersama.');
-  console.log(`Server XINZZ Backend v2.1 QR FIX berjalan di port ${PORT}`);
+  console.log(`Server XINZZ Backend v2.2 QR ROUTE FIX berjalan di port ${PORT}`);
 });
